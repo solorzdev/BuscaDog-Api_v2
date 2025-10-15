@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import veterinarias from './routes/veterinarias';
-import auth from './routes/auth';   // 👈 importa el nuevo router
+import auth from './routes/auth';  
 
 const app = express();
 
