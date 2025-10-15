@@ -9,68 +9,80 @@ const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 
 // =============== REGISTRO ===============
 router.post('/registrar', async (req, res) => {
+  const { correo, contrasena, nombre_mostrar } = req.body ?? {};
+  if (!correo || !contrasena) return res.status(400).json({ error: 'Faltan datos.' });
+
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) return res.status(500).json({ error: 'JWT mal configurado en el servidor.' });
+
   try {
-    const { correo, contrasena, nombre_mostrar } = req.body;
-
-    if (!correo || !contrasena)
-      return res.status(400).json({ error: 'Faltan datos obligatorios.' });
-
-    // Encriptar contraseña
     const hash = await bcrypt.hash(contrasena, 12);
 
-    const insert = `
-      INSERT INTO public.usuarios (correo, contrasena_hash, nombre_mostrar)
-      VALUES ($1, $2, $3)
-      RETURNING id, correo, nombre_mostrar, creado_en;
-    `;
-    const { rows } = await dbQuery(insert, [correo, hash, nombre_mostrar || null]);
+    const rows = await dbQuery(
+      `INSERT INTO public.usuarios (correo, contrasena_hash, nombre_mostrar)
+       VALUES ($1,$2,$3)
+       RETURNING id, correo, nombre_mostrar, creado_en;`,
+      [correo, hash, nombre_mostrar ?? null]
+    );
     const user = rows[0];
 
-    // Crear token
     const token = jwt.sign(
-      { sub: user.id, correo: user.correo },
+      { sub: String(user.id), correo: user.correo },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES }
+      { expiresIn: process.env.JWT_EXPIRES || '7d' }
     );
 
     res.status(201).json({ access_token: token, user });
-  } catch (err: any) {
-    console.error(err);
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'El correo ya está registrado.' });
-    }
-    res.status(500).json({ error: 'Error interno del servidor.' });
+  } catch (e: any) {
+    console.error('[AUTH /registrar] code:', e?.code, 'message:', e?.message);
+    if (e?.code === '23505') return res.status(409).json({ error: 'El correo ya está registrado.' });
+    return res.status(500).json({ error: 'Error interno del servidor.' });
   }
 });
 
 // =============== LOGIN ===============
 router.post('/login', async (req, res) => {
+  const { correo, contrasena } = req.body ?? {};
+  if (!correo || !contrasena) {
+    return res.status(400).json({ error: 'Correo y contraseña son requeridos.' });
+  }
+  if (!process.env.JWT_SECRET) {
+    return res.status(500).json({ error: 'JWT mal configurado en el servidor.' });
+  }
+
   try {
-    const { correo, contrasena } = req.body;
-
-    if (!correo || !contrasena)
-      return res.status(400).json({ error: 'Correo y contraseña son requeridos.' });
-
-    const query = `SELECT * FROM public.usuarios WHERE correo = $1 LIMIT 1;`;
-    const { rows } = await dbQuery(query, [correo]);
-    const user = rows[0];
-
-    if (!user) return res.status(401).json({ error: 'Credenciales inválidas.' });
-
-    const match = await bcrypt.compare(contrasena, user.contrasena_hash);
-    if (!match) return res.status(401).json({ error: 'Credenciales inválidas.' });
-
-    const token = jwt.sign(
-      { sub: user.id, correo: user.correo },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES }
+    // dbQuery devuelve un array de filas
+    const rows = await dbQuery(
+      `SELECT id, correo, nombre_mostrar, contrasena_hash
+       FROM public.usuarios
+       WHERE correo = $1
+       LIMIT 1;`,
+      [correo]
     );
 
-    delete user.contrasena_hash; // no enviamos el hash
-    res.json({ access_token: token, user });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error interno del servidor.' });
+    const user = rows[0];
+    if (!user) {
+      return res.status(401).json({ error: 'Credenciales inválidas.' });
+    }
+
+    const ok = await bcrypt.compare(contrasena, user.contrasena_hash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Credenciales inválidas.' });
+    }
+
+    // no regreses el hash
+    delete (user as any).contrasena_hash;
+
+    const token = jwt.sign(
+      { sub: String(user.id), correo: user.correo },
+      process.env.JWT_SECRET as string,
+      { expiresIn: process.env.JWT_EXPIRES || '7d' }
+    );
+
+    return res.json({ access_token: token, user });
+  } catch (e: any) {
+    console.error('[AUTH /login]', e?.code, e?.message);
+    return res.status(500).json({ error: 'Error interno del servidor.' });
   }
 });
 
