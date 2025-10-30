@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-
+import perfil from './routes/perfil';
 import veterinarias from './routes/veterinarias';
 import auth from './routes/auth';  
 
@@ -13,14 +13,18 @@ const app = express();
 app.use(cors());     
 app.use(helmet());
 app.use(morgan('dev'));
-app.use(express.json());  // 👈 necesario para leer req.body en JSON
+app.use(express.json());  
+app.use('/api/v1/veterinarias', veterinarias);
+app.use('/api/v1/auth', auth);
+app.use('/api/v1/usuarios', perfil); 
+
 
 // Ruta de prueba
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rutas de la API
 app.use('/api/v1/veterinarias', veterinarias);
-app.use('/api/v1/auth', auth);   // 👈 ahora tienes /registrar, /login, /me
+app.use('/api/v1/auth', auth);  
 
 // Arrancar servidor
 const port = Number(process.env.PORT ?? 8080);
