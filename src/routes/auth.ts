@@ -8,68 +8,62 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super_secreto';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 
 /* ================== REGISTRO ================== */
-router.post('/registrar', async (req, res) => {
-  const { correo, contrasena, nombre_mostrar } = req.body ?? {};
-  if (!correo || !contrasena) return res.status(400).json({ error: 'Faltan datos.' });
-  if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT mal configurado en el servidor.' });
-
+router.post(['/registrar', '/register'], async (req, res) => {
   try {
-    const hash = await bcrypt.hash(contrasena, 12);
+    const b = req.body ?? {};
+    const nombre = (b.nombre ?? '').trim();
+    const correo = (b.correo ?? '').trim().toLowerCase();
+    const pass   = (b.contrasena ?? '').toString();
 
-    // 1) Inserta usuario
-    const rows = await dbQuery(
-      `INSERT INTO public.usuarios (correo, contrasena_hash, nombre_mostrar)
-       VALUES ($1,$2,$3)
-       RETURNING id, correo, nombre_mostrar, creado_en;`,
-      [correo, hash, nombre_mostrar ?? null]
-    );
-    const user = rows[0];
-
-    // 2) Asigna rol "normal" (update-then-insert para convivir con UNIQUE deferrable)
-    const roleRows = await dbQuery(`SELECT id FROM public.roles WHERE codigo='normal' LIMIT 1;`);
-    if (roleRows.length) {
-      const rolId = roleRows[0].id;
-      const upd = await dbQuery(
-        `UPDATE public.usuario_roles
-           SET rol_id=$2, principal=true, asignado_en=now()
-         WHERE usuario_id=$1
-         RETURNING 1;`,
-        [user.id, rolId]
-      );
-      if (upd.length === 0) {
-        await dbQuery(
-          `INSERT INTO public.usuario_roles (usuario_id, rol_id, principal)
-           VALUES ($1,$2,true);`,
-          [user.id, rolId]
-        );
-      }
+    if (!nombre || !correo || !pass) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+      return res.status(422).json({ error: 'Correo no válido' });
+    }
+    if (pass.length < 8 || !/[A-Za-z]/.test(pass) || !/\d/.test(pass)) {
+      return res.status(422).json({ error: 'Contraseña débil' });
     }
 
-    // 3) Saca rol para la respuesta
-    const rolRow = await dbQuery(
-      `SELECT r.codigo AS rol_codigo
-         FROM public.usuario_roles ur
-         JOIN public.roles r ON r.id = ur.rol_id
-        WHERE ur.usuario_id = $1
-        LIMIT 1;`,
-      [user.id]
+    // correo único (case-insensitive)
+    const dupe = await dbQuery(
+      `SELECT 1 FROM public.usuarios WHERE lower(correo)=lower($1) LIMIT 1;`,
+      [correo]
     );
-    const rol_codigo = rolRow[0]?.rol_codigo ?? 'normal';
+    if (dupe.length) return res.status(409).json({ error: 'Correo ya registrado' });
 
-    const token = jwt.sign(
-      { sub: String(user.id), correo: user.correo, rol: rol_codigo },
-      process.env.JWT_SECRET as string,
-      { expiresIn: JWT_EXPIRES }
+    const hash = await bcrypt.hash(pass, 10);
+
+    const rows = await dbQuery(
+      `
+      INSERT INTO public.usuarios (
+        correo, contrasena_hash, nombre, apellidos, nombre_mostrar,
+        telefono, whatsapp, creado_en, actualizado_en, activo
+      ) VALUES (
+        $1, $2, $3, NULLIF($4,''), NULLIF($5,''),
+        NULLIF($6,''), NULLIF($7,''), now(), now(), true
+      )
+      RETURNING id, correo, nombre, apellidos, nombre_mostrar,
+                telefono, whatsapp, avatar_url, creado_en, actualizado_en;
+      `,
+      [
+        correo,
+        hash,
+        nombre,
+        (b.apellidos ?? '').trim(),
+        (b.nombre_mostrar ?? '').trim(),
+        (b.telefono ?? '').trim(),
+        (b.whatsapp ?? '').trim(),
+      ]
     );
 
-    res.status(201).json({
-      access_token: token,
-      user: { ...user, rol_codigo }
-    });
-  } catch (e: any) {
-    console.error('[AUTH /registrar] code:', e?.code, 'message:', e?.message);
-    if (e?.code === '23505') return res.status(409).json({ error: 'El correo ya está registrado.' });
-    return res.status(500).json({ error: 'Error interno del servidor.' });
+    const user = rows[0];
+    const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: '30d' });
+
+    return res.status(201).json({ user, token });
+  } catch (err: any) {
+    console.error('POST /auth/register', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
