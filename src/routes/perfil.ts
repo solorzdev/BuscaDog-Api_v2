@@ -121,23 +121,23 @@ router.patch('/me', async (req, res) => {
         END AS ubicacion;
       `,
       [
-        userId,                  // $1
-        b.nombre_mostrar ?? null,// $2
-        b.nombre ?? null,        // $3
-        b.apellidos ?? null,     // $4
-        correo,                  // $5  👈 correo/email normalizado
-        b.telefono ?? null,      // $6
-        b.whatsapp ?? null,      // $7
-        b.calle ?? null,         // $8
-        b.numero_ext ?? null,    // $9
-        b.numero_int ?? null,    // $10
-        b.colonia ?? null,       // $11
-        b.municipio ?? null,     // $12
-        b.estado ?? null,        // $13
-        b.codigo_postal ?? null, // $14
-        b.referencias ?? null,   // $15
-        lat,                     // $16
-        lng,                     // $17
+        userId,                  
+        b.nombre_mostrar ?? null,
+        b.nombre ?? null,        
+        b.apellidos ?? null,     
+        correo,                    
+        b.telefono ?? null,      
+        b.whatsapp ?? null,      
+        b.calle ?? null,         
+        b.numero_ext ?? null,    
+        b.numero_int ?? null,    
+        b.colonia ?? null,       
+        b.municipio ?? null,     
+        b.estado ?? null,        
+        b.codigo_postal ?? null, 
+        b.referencias ?? null,   
+        lat,                     
+        lng,                     
       ]
     );
 
