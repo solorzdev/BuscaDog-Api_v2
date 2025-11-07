@@ -25,9 +25,16 @@ router.get('/agg', async (req, res) => {
     limit     = clamp(limit, 50, 10_000);
 
     const rows = await dbQuery(
-      'SELECT * FROM public.veterinarias_agrupadas_bbox($1,$2,$3,$4,$5,$6);',
+      `
+      SELECT 
+        lat             AS lat,
+        lon             AS lng,     -- lon -> lng
+        total::int      AS count    -- total -> count
+      FROM public.veterinarias_agrupadas_bbox($1,$2,$3,$4,$5,$6);
+      `,
       [s, w, n, e, precision, limit]
     );
+
     res.json(rows);
   } catch (err: any) {
     res.status(err.status ?? 500).json({ error: err.message ?? 'error' });
@@ -49,9 +56,19 @@ router.get('/', async (req, res) => {
     limit = clamp(limit, 50, 5_000);
 
     const rows = await dbQuery(
-      'SELECT * FROM public.veterinarias_detalle_bbox($1,$2,$3,$4,$5);',
+      `
+      SELECT
+        id,
+        nombre,
+        lat     AS latitud,    -- lat -> latitud
+        lon     AS longitud,   -- lon -> longitud
+        municipio,
+        codigo_postal
+      FROM public.veterinarias_detalle_bbox($1,$2,$3,$4,$5);
+      `,
       [s, w, n, e, limit]
     );
+
     res.json(rows);
   } catch (err: any) {
     res.status(err.status ?? 500).json({ error: err.message ?? 'error' });
