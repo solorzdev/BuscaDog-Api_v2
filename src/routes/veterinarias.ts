@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { dbQuery } from '../db.js';  // 👈 importante: .js
+import { dbQuery } from '../db.js';  
 
 const router = Router();
 
@@ -55,16 +55,68 @@ router.get('/', async (req, res) => {
     let limit = Number(req.query.limit ?? 800);
     limit = clamp(limit, 50, 5_000);
 
+    // const rows = await dbQuery(
+    //   `
+    //   SELECT
+    //     id,
+    //     nombre,
+    //     lat     AS latitud,    -- lat -> latitud
+    //     lon     AS longitud,   -- lon -> longitud
+    //     municipio,
+    //     codigo_postal
+    //   FROM public.veterinarias_detalle_bbox($1,$2,$3,$4,$5);
+    //   `,
+    //   [s, w, n, e, limit]
+    // );
+
     const rows = await dbQuery(
       `
+      WITH f AS (
+        -- La función entrega (al menos) id, lat, lon y ya aplica el LIMIT
+        SELECT * FROM public.veterinarias_detalle_bbox($1,$2,$3,$4,$5)
+      )
       SELECT
-        id,
-        nombre,
-        lat     AS latitud,    -- lat -> latitud
-        lon     AS longitud,   -- lon -> longitud
-        municipio,
-        codigo_postal
-      FROM public.veterinarias_detalle_bbox($1,$2,$3,$4,$5);
+        f.id,
+        v.nombre,
+        f.lat AS latitud,
+        f.lon AS longitud,
+
+        -- Campos que vienen de la tabla base
+        v.municipio,
+        v.localidad,
+        v.codigo_postal,
+        v.telefono,
+        v.correo,
+        v.entidad,
+
+        -- Derivados, tolerantes a NULL
+        TRIM(concat_ws(' ',
+          NULLIF(v.tipo_vial, ''),
+          NULLIF(v.nombre_vial, ''),
+          NULLIF(NULLIF(v.numero_exterior::text, '0'), '')
+        )) AS via,
+
+        TRIM(concat_ws(' ',
+          NULLIF(v.tipo_asent, ''),
+          NULLIF(v.nomb_asent, '')
+        )) AS colonia,
+
+        TRIM(concat_ws(', ',
+          NULLIF(TRIM(concat_ws(' ',
+            NULLIF(v.tipo_vial, ''),
+            NULLIF(v.nombre_vial, ''),
+            NULLIF(NULLIF(v.numero_exterior::text, '0'), '')
+          )), ''),
+          NULLIF(TRIM(concat_ws(' ',
+            NULLIF(v.tipo_asent, ''),
+            NULLIF(v.nomb_asent, '')
+          )), ''),
+          NULLIF(v.localidad, ''),
+          NULLIF(v.municipio, ''),
+          NULLIF(v.codigo_postal, '')
+        )) AS direccion
+      FROM f
+      JOIN public.veterinarias v ON v.id = f.id;
       `,
       [s, w, n, e, limit]
     );
