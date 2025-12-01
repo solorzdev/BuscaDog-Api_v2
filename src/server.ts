@@ -36,7 +36,14 @@ app.use(express.json({ limit: '5mb' }));
 // 🗂️ ARCHIVOS ESTÁTICOS
 // ============================
 const uploadsDir = path.join(process.cwd(), 'uploads');
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', express.static(uploadsDir)); 
+
+// opcional, cache agresiva para avatares:
+app.use('/uploads/avatars', express.static(path.join(uploadsDir, 'avatars'), {
+  maxAge: '30d',
+  immutable: true,
+}));
 
 // ============================
 // 🚦 RUTAS

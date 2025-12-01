@@ -3,7 +3,6 @@ import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { dbQuery } from '../db.js';
 
-// Upload de avatar
 import multer from 'multer';
 import sharp from 'sharp';
 import fs from 'node:fs/promises';
@@ -13,9 +12,9 @@ const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secreto';
 const AVATAR_DIR = path.join(process.cwd(), 'uploads', 'avatars');
 
-// =============================
-// Helpers
-// =============================
+/* ============================================================
+   🔧 Helpers
+============================================================ */
 function getUserId(req: any): string | null {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return null;
@@ -28,29 +27,49 @@ function getUserId(req: any): string | null {
   }
 }
 
-// Multer en memoria (buffer → sharp)
+function baseUrl(req: Request): string {
+  const env = process.env.PUBLIC_BASE_URL || '';
+  if (env) return env.endsWith('/') ? env.slice(0, -1) : env;
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol;
+  const host = req.get('host');
+  return `${proto}://${host}`;
+}
+
+async function buildAvatarUrl(req: Request, userId: string): Promise<string | null> {
+  const file = path.join(AVATAR_DIR, `${userId}.webp`);
+  try {
+    const st = await fs.stat(file);
+    const v = Math.floor(st.mtimeMs);
+    return `${baseUrl(req)}/uploads/avatars/${userId}.webp?v=${v}`;
+  } catch {
+    return null;
+  }
+}
+
+/* ============================================================
+   📸 Configuración de Multer
+============================================================ */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 1_000_000 }, // 1 MB
   fileFilter: (_req, file, cb) => {
-    const ok = /image\/(jpeg|png|webp)/.test(file.mimetype);
+    const ok = /image\/(jpeg|png|webp|avif)/.test(file.mimetype);
     if (ok) cb(null, true);
-    else cb(new Error('Formato no permitido (solo JPG, PNG o WEBP)'));
+    else cb(new Error('Formato no permitido (JPG, PNG, WEBP o AVIF)'));
   },
 });
 
-// Captura y traduce errores de multer (no mandar 500 genérico)
 function handleMulterErr(err: any, _req: Request, res: Response, next: NextFunction) {
   if (!err) return next();
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ error: 'Imagen demasiado grande (máx 5MB)' });
+    return res.status(413).json({ error: 'Imagen demasiado grande (máx 1MB)' });
   }
   return res.status(415).json({ error: 'Archivo no permitido' });
 }
 
-// =============================
-// GET /api/v1/usuarios/me
-// =============================
+/* ============================================================
+   🧍 GET /api/v1/usuarios/me
+============================================================ */
 router.get('/me', async (req, res) => {
   const userId = getUserId(req);
   if (!userId) return res.status(401).json({ error: 'Token inválido.' });
@@ -60,7 +79,7 @@ router.get('/me', async (req, res) => {
       `SELECT u.id, u.correo, u.nombre_mostrar, u.nombre, u.apellidos,
               u.telefono, u.whatsapp, u.calle, u.numero_ext, u.numero_int,
               u.colonia, u.municipio, u.estado, u.codigo_postal, u.referencias,
-              u.avatar_url, u.creado_en, u.actualizado_en,
+              u.creado_en, u.actualizado_en,
               COALESCE(r.codigo, 'normal') AS rol_codigo,
               CASE WHEN u.ubicacion IS NULL THEN NULL
                    ELSE json_build_object('lat', ST_Y(u.ubicacion), 'lng', ST_X(u.ubicacion))
@@ -76,16 +95,19 @@ router.get('/me', async (req, res) => {
     if (rows.length === 0)
       return res.status(404).json({ error: 'Usuario no encontrado' });
 
-    res.json({ user: rows[0] });
+    const user = rows[0];
+    user.avatar_url = await buildAvatarUrl(req, userId);
+
+    res.json({ user });
   } catch (err) {
     console.error('GET /usuarios/me error:', err);
     res.status(500).json({ error: 'Error interno del servidor.' });
   }
 });
 
-// =============================
-// PATCH /api/v1/usuarios/me
-// =============================
+/* ============================================================
+   ✏️ PATCH /api/v1/usuarios/me
+============================================================ */
 router.patch('/me', async (req, res) => {
   const userId = getUserId(req);
   if (!userId) return res.status(401).json({ error: 'Token inválido.' });
@@ -93,7 +115,6 @@ router.patch('/me', async (req, res) => {
   const b = req.body ?? {};
   const lat = b.ubicacion?.lat ?? null;
   const lng = b.ubicacion?.lng ?? null;
-
   const rawEmail: string = (b.email ?? b.correo ?? '').trim();
   const correo = rawEmail === '' ? null : rawEmail;
 
@@ -106,7 +127,8 @@ router.patch('/me', async (req, res) => {
         `SELECT 1 FROM public.usuarios WHERE lower(correo)=lower($1) AND id<>$2 LIMIT 1`,
         [correo, userId]
       );
-      if (dupe.length > 0) return res.status(409).json({ error: 'Ese correo ya está en uso' });
+      if (dupe.length > 0)
+        return res.status(409).json({ error: 'Ese correo ya está en uso' });
     }
 
     const rows = await dbQuery(
@@ -137,7 +159,7 @@ router.patch('/me', async (req, res) => {
         id, correo, nombre_mostrar, nombre, apellidos,
         telefono, whatsapp, calle, numero_ext, numero_int,
         colonia, municipio, estado, codigo_postal, referencias,
-        avatar_url, creado_en, actualizado_en,
+        creado_en, actualizado_en,
         CASE WHEN ubicacion IS NULL THEN NULL
              ELSE json_build_object('lat', ST_Y(ubicacion), 'lng', ST_X(ubicacion))
         END AS ubicacion;
@@ -175,18 +197,19 @@ router.patch('/me', async (req, res) => {
       [userId]
     );
 
-    return res.json({ user: { ...rows[0], rol_codigo: rol[0]?.rol_codigo ?? 'normal' } });
+    const user = { ...rows[0], rol_codigo: rol[0]?.rol_codigo ?? 'normal' };
+    user.avatar_url = await buildAvatarUrl(req, userId);
+
+    return res.json({ user });
   } catch (err: any) {
-    console.error('PATCH /usuarios/me error:', {
-      code: err?.code, message: err?.message, detail: err?.detail, where: err?.where
-    });
+    console.error('PATCH /usuarios/me error:', err);
     return res.status(500).json({ error: 'Error interno del servidor.' });
   }
 });
 
-// =============================
-// POST /api/v1/usuarios/me/avatar
-// =============================
+/* ============================================================
+   🖼️ POST /api/v1/usuarios/me/avatar
+============================================================ */
 router.post(
   '/me/avatar',
   (req, res, next) => upload.single('image')(req, res, (err) => handleMulterErr(err, req, res, next)),
@@ -198,54 +221,27 @@ router.post(
     try {
       await fs.mkdir(AVATAR_DIR, { recursive: true });
 
-      // Log útil
-      console.log('📸 Subida de avatar', {
-        userId,
-        original: req.file.originalname,
-        mime: req.file.mimetype,
-        sizeKB: (req.file.size / 1024).toFixed(1),
-      });
-
-      const filename = `${userId}-${Date.now()}.webp`;
-      const outPath  = path.join(AVATAR_DIR, filename);
-
-      // Procesado y compresión
       const webp = await sharp(req.file.buffer)
         .rotate()
         .resize(512, 512, { fit: 'cover' })
-        .webp({ quality: 85 })
+        .webp({ quality: 80 })
         .toBuffer();
 
-      await fs.writeFile(outPath, webp);
+      const finalPath = path.join(AVATAR_DIR, `${userId}.webp`);
+      const tmpPath = `${finalPath}.tmp`;
+      await fs.writeFile(tmpPath, webp);
+      await fs.rename(tmpPath, finalPath);
 
-      // Base pública robusta (sin doble slash)
-      const baseRaw = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
-      const base = baseRaw.endsWith('/') ? baseRaw.slice(0, -1) : baseRaw;
-      const publicUrl = `${base}/uploads/avatars/${filename}`;
+      const st = await fs.stat(finalPath);
+      const v = Math.floor(st.mtimeMs);
 
-      // Borrar avatar anterior si era local
-      const prev = await dbQuery<{ avatar_url: string }>(
-        'SELECT avatar_url FROM public.usuarios WHERE id = $1 LIMIT 1',
-        [userId]
-      );
-      const oldUrl = prev[0]?.avatar_url ?? '';
-      if (oldUrl.startsWith(`${base}/uploads/avatars/`)) {
-        const rel = oldUrl.replace(`${base}/`, ''); // uploads/avatars/...
-        const local = path.join(process.cwd(), rel);
-        fs.unlink(local).catch(() => {});
-      }
+      const url = `${baseUrl(req)}/uploads/avatars/${userId}.webp?v=${v}`;
+      console.log('✅ Avatar guardado:',
+      { userId, finalPath, url });
 
-      await dbQuery(
-        `UPDATE public.usuarios
-           SET avatar_url = $1, actualizado_en = NOW()
-         WHERE id = $2`,
-        [publicUrl, userId]
-      );
-
-      console.log('✅ Avatar actualizado:', publicUrl);
-      return res.json({ url: publicUrl });
+      return res.json({ url, v });
     } catch (err: any) {
-      console.error('❌ POST /usuarios/me/avatar', err?.message);
+      console.error('POST /usuarios/me/avatar error:', err?.message);
       if (String(err?.message).includes('unsupported image format')) {
         return res.status(415).json({ error: 'Formato de imagen no soportado.' });
       }
